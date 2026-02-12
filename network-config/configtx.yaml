@@ -1,0 +1,156 @@
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: ../organizations/ordererOrganizations/ministry.gov.so/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+
+  - &MogadishuUniversity
+    Name: MogadishuUniversityMSP
+    ID: MogadishuUniversityMSP
+    MSPDir: ../organizations/peerOrganizations/mogadishu.university.so/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('MogadishuUniversityMSP.admin', 'MogadishuUniversityMSP.peer', 'MogadishuUniversityMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('MogadishuUniversityMSP.admin', 'MogadishuUniversityMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('MogadishuUniversityMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('MogadishuUniversityMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.mogadishu.university.so
+        Port: 7051
+
+  - &HargeisaUniversity
+    Name: HargeisaUniversityMSP
+    ID: HargeisaUniversityMSP
+    MSPDir: ../organizations/peerOrganizations/hargeisa.university.so/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('HargeisaUniversityMSP.admin', 'HargeisaUniversityMSP.peer', 'HargeisaUniversityMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('HargeisaUniversityMSP.admin', 'HargeisaUniversityMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('HargeisaUniversityMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('HargeisaUniversityMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.hargeisa.university.so
+        Port: 9051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_0: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  OrdererType: etcdraft
+  Addresses:
+    - orderer.ministry.gov.so:7050
+  EtcdRaft:
+    Consenters:
+      - Host: orderer.ministry.gov.so
+        Port: 7050
+        ClientTLSCert: ../organizations/ordererOrganizations/ministry.gov.so/orderers/orderer.ministry.gov.so/tls/server.crt
+        ServerTLSCert: ../organizations/ordererOrganizations/ministry.gov.so/orderers/orderer.ministry.gov.so/tls/server.crt
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  EducationOrdererGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities:
+        <<: *OrdererCapabilities
+    Consortiums:
+      EducationConsortium:
+        Organizations:
+          - *MogadishuUniversity
+          - *HargeisaUniversity
+
+  EducationChannel:
+    Consortium: EducationConsortium
+    <<: *ChannelDefaults
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *MogadishuUniversity
+        - *HargeisaUniversity
+      Capabilities:
+        <<: *ApplicationCapabilities
