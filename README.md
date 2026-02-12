@@ -19,39 +19,36 @@ Hyperledger Fabric 2.5 network for the NDCSF education sector pilot. Supports ce
 
 ## Quick Start
 
-### 1. Install Fabric Binaries
+### Option 1: One-Click Setup (Recommended)
 
 ```bash
-# Install Fabric 2.5.14 and CA 1.5.17
+# 1. Install Fabric binaries
 ./install-fabric.sh f d b s c
+
+# 2. One-click network setup (automates everything)
+./scripts/setup-network.sh
 ```
 
-Components:
-- `f` — Fabric binaries
-- `d` — Docker Compose files
-- `b` — Bootstrap scripts
-- `s` — Samples (optional)
-- `c` — CA binaries
-
-### 2. Start the Network
+### Option 2: Manual Setup
 
 ```bash
-# Bring up the network with CAs, peers, and orderer
-./network-config/start.sh
-```
+# 1. Install Fabric binaries
+./install-fabric.sh f d b s c
 
-### 3. Create Channel
+# 2. Generate configurations from organizations.yaml
+./scripts/generate-orgs.sh
 
-```bash
-# Create the education channel and join peers
-./network-config/create-channel.sh
-```
+# 3. Generate crypto materials
+./scripts/generate-crypto.sh
 
-### 4. Deploy Chaincode
+# 4. Start network
+docker-compose -f docker/docker-compose.yaml up -d
 
-```bash
-# Package, install, and commit the certificate chaincode
-./network-config/deploy-chaincode.sh
+# 5. Create channel
+./scripts/create-channel.sh
+
+# 6. Deploy chaincode
+./scripts/deploy-chaincode.sh
 ```
 
 ### 5. Verify Network Health
@@ -68,16 +65,83 @@ docker exec peer0.hargeisa.university.so peer channel list
 blockchain/
 ├── install-fabric.sh          # Fabric binary installer
 ├── network-config/
-│   ├── start.sh              # Network startup
-│   ├── create-channel.sh     # Channel creation
-│   ├── deploy-chaincode.sh   # Chaincode deployment
-│   ├── configtx.yaml         # Channel configuration
-│   └── crypto-config.yaml    # Crypto material definition
+│   ├── organizations.yaml    # Organization definitions (master config)
+│   ├── configtx.yaml         # Channel configuration (auto-generated)
+│   └── crypto-config.yaml    # Crypto material definition (auto-generated)
 ├── organizations/             # Generated MSP and TLS certs
 ├── channel-artifacts/        # Channel config blocks and tx files
-├── docker/                   # Docker Compose files
+├── docker/                   # Docker Compose files (auto-generated)
 └── scripts/                  # Utility scripts
+    ├── setup-network.sh      # One-click network setup
+    ├── generate-orgs.sh      # Config generator
+    └── generate-crypto.sh     # Crypto material generator
 ```
+
+## Automation
+
+### Adding New Organizations
+
+To add a new university or organization:
+
+1. **Edit `network-config/organizations.yaml`:**
+```yaml
+PeerOrgs:
+  - Name: MogadishuUniversity
+    Domain: mogadishu.university.so
+    Type: university
+    Peers: 1
+    Users: 1
+    
+  - Name: HargeisaUniversity
+    Domain: hargeisa.university.so
+    Type: university
+    Peers: 1
+    Users: 1
+    
+  # Add new organization here:
+  - Name: BosasoUniversity
+    Domain: bosaso.university.so
+    Type: university
+    Peers: 1
+    Users: 1
+```
+
+2. **Regenerate everything:**
+```bash
+# Clean existing network
+./scripts/test-network.sh clean
+
+# Regenerate configs and restart
+./scripts/setup-network.sh
+```
+
+The automation will:
+- Generate updated `crypto-config.yaml`
+- Generate updated `configtx.yaml` 
+- Generate updated `docker-compose.yaml`
+- Create crypto materials for new org
+- Add new peer/CA containers
+- Update channel configuration
+- Join new peer to channel
+
+### Scaling Organizations
+
+For multiple peers per organization:
+```yaml
+- Name: MogadishuUniversity
+  Domain: mogadishu.university.so
+  Type: university
+  Peers: 3  # Creates peer0, peer1, peer2
+  Users: 5  # Creates 5 user certificates
+```
+
+### Organization Types
+
+- **university** - Educational institutions
+- **government** - Government ministries
+- **employer** - Private sector employers
+
+Each type gets appropriate policies and access controls.
 
 ## Network Operations
 
