@@ -1,0 +1,36 @@
+# Organization definitions for NDCS Blockchain Network
+# This file drives automated generation of crypto-config.yaml, configtx.yaml, and docker-compose.yaml
+
+# Orderer Organization (fixed)
+Orderer:
+  Name: Orderer
+  Domain: ministry.gov.so
+  Type: orderer
+
+# Peer Organizations (add more here to auto-generate)
+PeerOrgs:
+  - Name: MogadishuUniversity
+    Domain: mogadishu.university.so
+    Type: university
+    Peers: 1
+    Users: 1
+    
+  - Name: HargeisaUniversity
+    Domain: hargeisa.university.so
+    Type: university
+    Peers: 1
+    Users: 1
+    
+  # Example: Add a new university
+  # - Name: BosasoUniversity
+  #   Domain: bosaso.university.so
+  #   Type: university
+  #   Peers: 1
+  #   Users: 1
+    
+  # Example: Add a government ministry
+  # - Name: EducationMinistry
+  #   Domain: education.gov.so
+  #   Type: government
+  #   Peers: 1
+  #   Users: 1
