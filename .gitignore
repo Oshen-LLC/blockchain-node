@@ -2,6 +2,7 @@
 *.tar.gz
 channel-artifacts/
 crypto-config/
+organizations/  # Auto-generated, contains private keys
 
 # Logs
 *.log
@@ -58,7 +59,8 @@ filestore/
 *_sk
 *_cert
 *.pem
-!organizations/**/*.pem
+*.crt
+*.key
 
 # Fabric CA database
 fabric-ca-server.db
