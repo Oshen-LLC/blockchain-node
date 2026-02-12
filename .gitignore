@@ -1,0 +1,74 @@
+# Fabric generated artifacts
+*.tar.gz
+channel-artifacts/
+crypto-config/
+
+# Logs
+*.log
+logs/
+
+# Docker volumes and temporary state
+docker-compose.override.yml
+fabric-ca/
+data/
+peer0/
+orderer/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary scripts and build outputs
+*.sh
+!install-fabric.sh
+!scripts/*.sh
+bin/
+builders/
+
+# IDE and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test artifacts
+test-*.json
+test-*.block
+*.tx
+*.block
+
+# Chaincode build artifacts (if building in-tree)
+chaincode/bin/
+chaincode/chaincode.tar.gz
+chaincode/go.sum
+chaincode/vendor/
+
+# CouchDB data (if using local state DB)
+couchdb-data/
+
+# Orderer and peer runtime files
+system-genesis-block/
+filestore/
+
+# MSP and TLS temporary files
+*_sk
+*_cert
+*.pem
+!organizations/**/*.pem
+
+# Fabric CA database
+fabric-ca-server.db
+fabric-ca-server.db-*
+
+# Network setup scripts outputs
+*.log
+*.pid
+*.sock
+
+# Kubernetes manifests (if using K8s deployment)
+*.yaml
+!config/*.yaml
+!network-config/*.yaml
