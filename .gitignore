@@ -20,11 +20,14 @@ orderer/
 .env
 .env.local
 .env.*.local
+!.env.example                          # Allow example env files
 
 # Temporary scripts and build outputs
 *.sh
 !install-fabric.sh
 !scripts/*.sh
+!scripts/deploy-*.sh                    # Allow deployment automation scripts
+!scripts/fabric-*.sh                    # Allow Fabric-specific scripts
 bin/
 builders/
 
@@ -41,12 +44,6 @@ test-*.json
 test-*.block
 *.tx
 *.block
-
-# Chaincode build artifacts (if building in-tree)
-chaincode/bin/
-chaincode/chaincode.tar.gz
-chaincode/go.sum
-chaincode/vendor/
 
 # CouchDB data (if using local state DB)
 couchdb-data/
@@ -75,8 +72,21 @@ fabric-ca-server.db-*
 *.yaml
 !config/*.yaml
 !network-config/*.yaml
-!network-config/organizations.yaml  # Master config file
+!network-config/organizations.yaml      # Master config file
+!infra/*.yaml                           # Allow infrastructure configs
 
-# Automation temporary files
-cc.tar.gz
-certificate-chaincode.tar.gz
+# NOTE: This .gitignore is for the BLOCKCHAIN repository only
+# Chaincode and Gateway API have their own repositories:
+# - Chaincode: github.com/somalia-cert/chaincode
+# - Gateway API: github.com/somalia-cert/gateway-api
+
+# External repository references (should be in separate repos)
+../chaincode/                            # Chaincode has its own repo
+../gateway-api/                          # Gateway API has its own repo
+
+# Cross-repo automation files (allow for CI/CD integration)
+!scripts/integration-*.sh                # Allow integration scripts
+!scripts/ci-*.sh                         # Allow CI/CD scripts
+!scripts/deploy-*.sh                    # Allow deployment scripts
+!deploy/                                # Allow deployment configs
+!integration/                           # Allow integration test configs
