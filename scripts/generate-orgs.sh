@@ -114,11 +114,11 @@ EOF
 
 Capabilities:
   Channel: &ChannelCapabilities
-    V2_5: true
+    V2_0: true
   Orderer: &OrdererCapabilities
-    V2_5: true
+    V2_0: true
   Application: &ApplicationCapabilities
-    V2_5: true
+    V2_0: true
 
 Application: &ApplicationDefaults
   Organizations:
@@ -211,8 +211,12 @@ EOF
     cat >> "${NETWORK_DIR}/network-config/configtx.yaml" << EOF
   
   EducationChannel:
-    Consortium: SampleConsortium
     <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities: *OrdererCapabilities
     Application:
       <<: *ApplicationDefaults
       Organizations:
@@ -242,6 +246,7 @@ EOF
     cat >> "${NETWORK_DIR}/docker/docker-compose.yaml" << EOF
   orderer.ndts.gov.so:
     container_name: orderer.ndts.gov.so
+    hostname: orderer.ministry.gov.so
     image: hyperledger/fabric-orderer:2.5.14
     environment:
       - FABRIC_LOGGING_SPEC=INFO
@@ -301,6 +306,7 @@ EOF
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: peer node start
     volumes:
+      - ../config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ../organizations/peerOrganizations/$domain/peers/peer0.$domain/msp:/etc/hyperledger/fabric/msp
       - ../organizations/peerOrganizations/$domain/peers/peer0.$domain/tls:/etc/hyperledger/fabric/tls
       - ../organizations/peerOrganizations/$domain/users:/etc/hyperledger/fabric/users
@@ -372,6 +378,7 @@ EOF
       - /var/run/docker.sock:/host/var/run/docker.sock
       - ../organizations:/opt/gopath/src/github.com/hyperledger/fabric/peer/organizations
       - ../channel-artifacts:/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts
+      - ../network-config:/opt/gopath/src/github.com/hyperledger/fabric/peer/network-config
     networks:
       - ndts-network
 
