@@ -57,6 +57,15 @@ EOF
             domain=$(sed -n "/Name: $org_name/,/Domain:/p" "$CONFIG_FILE" | grep "Domain:" | awk '{print $2}')
             msp_id="${org_name}MSP"
             
+            # Determine port based on organization
+            if [[ $org_name == "MogadishuUniversity" ]]; then
+                port=7051
+            elif [[ $org_name == "HargeisaUniversity" ]]; then
+                port=8051
+            else
+                port=7051
+            fi
+            
             cat >> "${NETWORK_DIR}/network-config/configtx.yaml" << EOF
   - &$org_name
     Name: $msp_id
@@ -75,6 +84,9 @@ EOF
       Endorsement:
         Type: Signature
         Rule: "OR('$msp_id.member')"
+    AnchorPeers:
+      - Host: peer0.$domain
+        Port: $port
 
 EOF
         fi
@@ -110,17 +122,54 @@ Capabilities:
 
 Application: &ApplicationDefaults
   Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
   Capabilities:
     <<: *ApplicationCapabilities
 
 Orderer: &OrdererDefaults
   OrdererType: etcdraft
+  Addresses:
+    - orderer.ndts.gov.so:7050
   BatchTimeout: 2s
   BatchSize:
     MaxMessageCount: 10
     AbsoluteMaxBytes: 99 MB
     PreferredMaxBytes: 512 KB
+  EtcdRaft:
+    Consenters:
+      - Host: orderer.ndts.gov.so
+        Port: 7050
+        ClientTLSCert: ../organizations/ordererOrganizations/ministry.gov.so/orderers/orderer.ministry.gov.so/tls/server.crt
+        ServerTLSCert: ../organizations/ordererOrganizations/ministry.gov.so/orderers/orderer.ministry.gov.so/tls/server.crt
   Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
   Capabilities:
     <<: *OrdererCapabilities
 
@@ -139,6 +188,28 @@ Channel: &ChannelDefaults
     <<: *ChannelCapabilities
 
 Profiles:
+  EducationOrdererGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities: *OrdererCapabilities
+    Consortiums:
+      SampleConsortium:
+        Organizations:
+EOF
+
+    # Add peer orgs to consortium
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*-[[:space:]]*Name:[[:space:]]*([^[:space:]]+) ]]; then
+            org_name="${BASH_REMATCH[1]}"
+            echo "          - *$org_name" >> "${NETWORK_DIR}/network-config/configtx.yaml"
+        fi
+    done < "$CONFIG_FILE"
+    
+    cat >> "${NETWORK_DIR}/network-config/configtx.yaml" << EOF
+  
   EducationChannel:
     Consortium: SampleConsortium
     <<: *ChannelDefaults
@@ -148,26 +219,12 @@ Profiles:
 EOF
 
     # Add peer orgs to channel profile
-    first=true
     while IFS= read -r line; do
         if [[ $line =~ ^[[:space:]]*-[[:space:]]*Name:[[:space:]]*([^[:space:]]+) ]]; then
             org_name="${BASH_REMATCH[1]}"
-            if [ "$first" = true ]; then
-                echo "        - *$org_name" >> "${NETWORK_DIR}/network-config/configtx.yaml"
-                first=false
-            else
-                echo "        - *$org_name" >> "${NETWORK_DIR}/network-config/configtx.yaml"
-            fi
+            echo "        - *$org_name" >> "${NETWORK_DIR}/network-config/configtx.yaml"
         fi
     done < "$CONFIG_FILE"
-    
-    cat >> "${NETWORK_DIR}/network-config/configtx.yaml" << EOF
-
-  Orderer:
-    <<: *OrdererDefaults
-    Organizations:
-      - *OrdererOrg
-EOF
     
     echo "✅ configtx.yaml generated"
 }
