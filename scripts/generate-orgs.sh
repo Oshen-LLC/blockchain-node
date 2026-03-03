@@ -77,7 +77,7 @@ EOF
         Rule: "OR('$msp_id.member')"
 
 EOF
-        done
+        fi
     done < "$CONFIG_FILE"
     
     # Add orderer org
