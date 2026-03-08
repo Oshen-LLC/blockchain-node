@@ -45,6 +45,19 @@ restart_pm2() {
   pm2 save >/dev/null
 }
 
+wait_for_bridge() {
+  local attempts="${1:-15}"
+  local sleep_seconds="${2:-2}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if curl --fail --silent --show-error http://127.0.0.1:4000/health >/dev/null; then
+      return 0
+    fi
+    sleep "$sleep_seconds"
+  done
+  return 1
+}
+
 rollback_to() {
   local target="$1"
   if [ -n "$target" ]; then
@@ -74,7 +87,7 @@ ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 load_env_file "$ENV_FILE"
 restart_pm2
 
-if ! curl --fail --silent --show-error http://127.0.0.1:4000/health >/dev/null; then
+if ! wait_for_bridge; then
   rollback_to "$previous_target"
   echo "bridge health check failed; rolled back to previous release" >&2
   exit 1
