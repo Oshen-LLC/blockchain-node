@@ -1,0 +1,39 @@
+{
+  "name": "blockchain-node",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Hyperledger Fabric 2.5 network for the NDCSF education sector pilot. Supports certificate issuance, verification, and revocation between Mogadishu University and Hargeisa University.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --loader ts-node/esm --no-warnings index.ts",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "start:prod": "node --no-warnings dist/index.js",
+    "healthcheck": "node scripts/healthcheck.mjs",
+    "test": "npm run test:integration",
+    "test:integration": "node --test tests/api.integration.test.mjs",
+    "audit:cleanup:report": "node scripts/audit-cleanup.mjs",
+    "audit:cleanup:apply": "node scripts/audit-cleanup.mjs --apply"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@hyperledger/fabric-gateway": "^1.10.1",
+    "@types/pdfkit": "^0.17.5",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "pdfkit": "^0.17.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.3.5",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

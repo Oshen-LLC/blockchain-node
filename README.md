@@ -2,6 +2,17 @@
 
 Hyperledger Fabric 2.5 network for the NDCSF education sector pilot. Supports certificate issuance, verification, and revocation between Mogadishu University and Hargeisa University.
 
+## VPS Deployment
+
+The live bridge deployment now uses GitHub Actions as the release source.
+
+- Workflow: `.github/workflows/deploy-bridge.yml`
+- Package script: `deploy/github/package-bridge-release.sh`
+- VPS activation: `deploy/vps/activate-bridge-release.sh`
+- VPS rollback: `deploy/vps/rollback-bridge.sh`
+
+Normal production updates should come from GitHub Actions, not from editing files directly on the VPS.
+
 ## Architecture
 
 - **Peers**: `peer0.mogadishu.university.so`, `peer0.hargeisa.university.so`

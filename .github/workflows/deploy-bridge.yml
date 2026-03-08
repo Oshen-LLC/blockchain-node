@@ -1,0 +1,145 @@
+name: Deploy Bridge
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Deploy a new release or roll back
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - rollback
+      release_id:
+        description: Existing bridge release ID to roll back to. Leave blank for previous release.
+        required: false
+        type: string
+
+env:
+  DEPLOY_BASE_DIR: ${{ vars.DEPLOY_BASE_DIR || '/opt/ndts' }}
+  VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+
+jobs:
+  deploy:
+    if: github.event_name != 'push' || vars.AUTO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-bridge-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.action }}" = "rollback" ]; then
+            echo "action=rollback" >> "$GITHUB_OUTPUT"
+            echo "release_id=${{ github.event.inputs.release_id }}" >> "$GITHUB_OUTPUT"
+          else
+            release_id="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+            echo "action=deploy" >> "$GITHUB_OUTPUT"
+            echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.meta.outputs.action == 'deploy'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Package bridge release
+        if: steps.meta.outputs.action == 'deploy'
+        env:
+          RELEASE_ID: ${{ steps.meta.outputs.release_id }}
+          REPO_NAME: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          ACTOR_NAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          ./deploy/github/package-bridge-release.sh
+
+      - name: Prepare SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_HOST"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/id_vps
+          chmod 600 ~/.ssh/id_vps
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Install bridge deploy scripts on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+          DEPLOY_BASE_DIR: ${{ env.DEPLOY_BASE_DIR }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          ssh -i ~/.ssh/id_vps -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "sudo install -d -m 0755 ${DEPLOY_BASE_DIR}/deploy/bridge"
+          scp -i ~/.ssh/id_vps -P "$VPS_PORT" deploy/vps/activate-bridge-release.sh deploy/vps/rollback-bridge.sh "$VPS_USER@$VPS_HOST:/tmp/"
+          ssh -i ~/.ssh/id_vps -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "sudo install -m 0755 /tmp/activate-bridge-release.sh ${DEPLOY_BASE_DIR}/deploy/bridge/activate-bridge-release.sh && sudo install -m 0755 /tmp/rollback-bridge.sh ${DEPLOY_BASE_DIR}/deploy/bridge/rollback-bridge.sh && rm -f /tmp/activate-bridge-release.sh /tmp/rollback-bridge.sh"
+
+      - name: Upload bridge artifact
+        if: steps.meta.outputs.action == 'deploy'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+        run: |
+          set -euo pipefail
+          artifact=".release/bridge-${{ steps.meta.outputs.release_id }}.tar.gz"
+          test -f "$artifact"
+          scp -i ~/.ssh/id_vps -P "$VPS_PORT" "$artifact" "$VPS_USER@$VPS_HOST:/tmp/bridge-${{ steps.meta.outputs.release_id }}.tar.gz"
+
+      - name: Activate bridge release
+        if: steps.meta.outputs.action == 'deploy'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+          DEPLOY_BASE_DIR: ${{ env.DEPLOY_BASE_DIR }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_vps -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "DEPLOY_BASE_DIR=${DEPLOY_BASE_DIR} ${DEPLOY_BASE_DIR}/deploy/bridge/activate-bridge-release.sh /tmp/bridge-${{ steps.meta.outputs.release_id }}.tar.gz ${{ steps.meta.outputs.release_id }} && rm -f /tmp/bridge-${{ steps.meta.outputs.release_id }}.tar.gz"
+
+      - name: Roll back bridge release
+        if: steps.meta.outputs.action == 'rollback'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+          DEPLOY_BASE_DIR: ${{ env.DEPLOY_BASE_DIR }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_vps -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "DEPLOY_BASE_DIR=${DEPLOY_BASE_DIR} ${DEPLOY_BASE_DIR}/deploy/bridge/rollback-bridge.sh '${{ steps.meta.outputs.release_id }}'"
+
+      - name: Verify bridge health
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ env.VPS_PORT }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_vps -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "curl --fail --silent --show-error http://127.0.0.1:4000/health >/dev/null && pm2 status ndts-bridge"
