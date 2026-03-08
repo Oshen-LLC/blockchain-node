@@ -183,6 +183,12 @@ type UserRecord = AppUser & {
     passwordHash: string;
 };
 
+type PublicRole = 'teacher' | 'student' | 'verifier' | 'institute_admin' | 'ministry_admin' | 'super_admin';
+
+type PublicAppUser = Omit<AppUser, 'role'> & {
+    role: PublicRole;
+};
+
 type Institution = {
     id: string;
     name: string;
@@ -835,6 +841,24 @@ function serializeJson(value: unknown): string {
 function sanitizeUser(record: UserRecord): AppUser {
     const { passwordHash: _passwordHash, ...user } = record;
     return user;
+}
+
+function toPublicRole(role: AppRole): PublicRole {
+    switch (role) {
+        case 'school_admin':
+            return 'institute_admin';
+        case 'certificate_verifier':
+            return 'verifier';
+        default:
+            return role;
+    }
+}
+
+function toPublicUser(user: AppUser): PublicAppUser {
+    return {
+        ...user,
+        role: toPublicRole(user.role),
+    };
 }
 
 function buildAuthPayload(decoded: JwtPayload): AuthTokenPayload | null {
@@ -3529,7 +3553,7 @@ function queryReportDataset(db: DatabaseSync, type: ReportType, from: string, to
                 rows: rows.map((row) => [
                     row.name,
                     row.email,
-                    row.role,
+                    toPublicRole(row.role),
                     row.status,
                     row.institutionName || 'System',
                     row.studentId || '-',
@@ -3929,12 +3953,12 @@ async function main() {
             const gatewayToken = await loginToGateway({ email, password });
             res.json({
                 token: buildUserToken(user, gatewayToken),
-                user,
+                user: toPublicUser(user),
             });
         });
 
         app.get('/auth/me', authMiddleware, async (req, res) => {
-            res.json({ user: (req as AuthenticatedRequest).user });
+            res.json({ user: toPublicUser((req as AuthenticatedRequest).user!) });
         });
 
         app.get('/api/v1/me/credentials', authMiddleware, async (req, res) => {
@@ -4420,7 +4444,7 @@ async function main() {
                 institutionId,
                 search,
             });
-            res.json(users);
+            res.json(users.map(toPublicUser));
         });
 
         app.post(['/api/users', '/api/v1/users'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
@@ -4474,7 +4498,7 @@ async function main() {
                 entityId: user.id,
                 details: { email: user.email, role: user.role, institutionId: user.institutionId },
             });
-            res.status(201).json(user);
+            res.status(201).json(toPublicUser(user));
         });
 
         app.patch(['/api/users/:id', '/api/v1/users/:id'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
@@ -4521,7 +4545,7 @@ async function main() {
                 entityId: userRecord.id,
                 details: { name, status, institutionId, studentId },
             });
-            res.json(sanitizeUser(getUserRecordById(db, userRecord.id)!));
+            res.json(toPublicUser(sanitizeUser(getUserRecordById(db, userRecord.id)!)));
         });
 
         app.post(['/api/users/:id/reset-password', '/api/v1/users/:id/reset-password'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
@@ -5029,7 +5053,7 @@ async function main() {
                 institutionId: requester.institutionId,
                 status: 'active',
                 search,
-            }));
+            }).map(toPublicUser));
         });
 
         app.get('/api/teacher/certificates', authMiddleware, requireRoles('teacher'), async (req, res) => {
