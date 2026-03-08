@@ -33,6 +33,12 @@ orderer/
 !scripts/*.sh
 !scripts/deploy-*.sh                    # Allow deployment automation scripts
 !scripts/fabric-*.sh                    # Allow Fabric-specific scripts
+!deploy/
+!deploy/github/
+!deploy/vps/
+!deploy/github/*.sh
+!deploy/vps/*.sh
+!deploy/**/*.sh                         # Allow VPS/GitHub deploy scripts
 bin/
 builders/
 
