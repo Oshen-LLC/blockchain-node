@@ -372,6 +372,8 @@ type TeacherEnrollment = {
     status: EnrollmentStatus;
     certificateIssued: boolean;
     certificateId: string | null;
+    reviewCredentialId: string | null;
+    reviewSubmittedAt: string | null;
     institutionId: string | null;
     institutionName: string | null;
     createdAt: string;
@@ -407,6 +409,8 @@ type TeacherCertificateQueueItem = {
     finalGrade: string | null;
     institutionName: string | null;
     updatedAt: string;
+    reviewCredentialId: string | null;
+    reviewSubmittedAt: string | null;
 };
 
 type TeacherIssuedCertificate = {
@@ -422,8 +426,13 @@ type TeacherIssuedCertificate = {
     graduationDate: string;
     issuedAt: string;
     university: string;
+    status: string;
     verificationCount: number;
     latestVerificationAt: string | null;
+    verificationUrl: string | null;
+    proofReference: string | null;
+    versionNo: number | null;
+    qrToken: string | null;
 };
 
 type TeacherDashboardSummary = {
@@ -539,10 +548,10 @@ const ROLE_SET = new Set<AppRole>([
     'certificate_verifier',
 ]);
 
-const ISSUER_ROLES: AppRole[] = ['teacher', 'school_admin', 'ministry_admin', 'super_admin'];
-const ADMIN_ROLES: AppRole[] = ['ministry_admin', 'super_admin'];
-const FRAUD_MANAGER_ROLES: AppRole[] = ['certificate_verifier', 'ministry_admin', 'super_admin'];
-const SCHOOL_MANAGER_ROLES: AppRole[] = ['school_admin', 'ministry_admin', 'super_admin'];
+const ISSUER_ROLES: AppRole[] = ['school_admin', 'super_admin'];
+const ADMIN_ROLES: AppRole[] = ['super_admin'];
+const FRAUD_MANAGER_ROLES: AppRole[] = ['certificate_verifier', 'super_admin'];
+const SCHOOL_MANAGER_ROLES: AppRole[] = ['school_admin', 'super_admin'];
 const REQUIRED_ISSUE_FIELDS: Array<keyof IssueCertificateInput> = [
     'id',
     'studentId',
@@ -877,7 +886,6 @@ function requireRoles(...allowedRoles: AppRole[]) {
 
 function canManageRole(requester: AppUser, targetRole: AppRole): boolean {
     if (requester.role === 'super_admin') return true;
-    if (requester.role === 'ministry_admin') return targetRole !== 'super_admin';
     if (requester.role === 'school_admin') {
         return targetRole === 'teacher' || targetRole === 'student' || targetRole === 'certificate_verifier';
     }
@@ -1013,6 +1021,8 @@ async function ensureDatabaseReady(dbPath: string): Promise<DatabaseSync> {
             status TEXT NOT NULL,
             certificateIssued INTEGER NOT NULL DEFAULT 0,
             certificateId TEXT,
+            reviewCredentialId TEXT,
+            reviewSubmittedAt TEXT,
             createdAt TEXT NOT NULL,
             updatedAt TEXT NOT NULL,
             UNIQUE (courseId, studentUserId),
@@ -1033,6 +1043,8 @@ async function ensureDatabaseReady(dbPath: string): Promise<DatabaseSync> {
     `);
     ensureTableColumn(db, 'certificate_issuance_events', 'courseId', 'TEXT');
     ensureTableColumn(db, 'certificate_issuance_events', 'enrollmentId', 'TEXT');
+    ensureTableColumn(db, 'course_enrollments', 'reviewCredentialId', 'TEXT');
+    ensureTableColumn(db, 'course_enrollments', 'reviewSubmittedAt', 'TEXT');
     return db;
 }
 
@@ -1549,13 +1561,15 @@ function createEnrollmentRecord(db: DatabaseSync, input: {
     status?: EnrollmentStatus;
     certificateIssued?: boolean;
     certificateId?: string | null;
+    reviewCredentialId?: string | null;
+    reviewSubmittedAt?: string | null;
 }): TeacherEnrollment {
     const timestamp = nowIso();
     const id = createId('enroll');
     db.prepare(`
         INSERT INTO course_enrollments (
-            id, courseId, studentUserId, progressPercent, completedLessons, totalLessons, finalGrade, status, certificateIssued, certificateId, createdAt, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, courseId, studentUserId, progressPercent, completedLessons, totalLessons, finalGrade, status, certificateIssued, certificateId, reviewCredentialId, reviewSubmittedAt, createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         id,
         input.courseId,
@@ -1567,6 +1581,8 @@ function createEnrollmentRecord(db: DatabaseSync, input: {
         input.status ?? 'active',
         input.certificateIssued ? 1 : 0,
         input.certificateId ?? null,
+        input.reviewCredentialId ?? null,
+        input.reviewSubmittedAt ?? null,
         timestamp,
         timestamp,
     );
@@ -1594,6 +1610,8 @@ function ensureEnrollmentRecord(db: DatabaseSync, input: {
     status?: EnrollmentStatus;
     certificateIssued?: boolean;
     certificateId?: string | null;
+    reviewCredentialId?: string | null;
+    reviewSubmittedAt?: string | null;
 }): TeacherEnrollment {
     const existing = findEnrollmentRecord(db, input.courseId, input.studentUserId);
     if (existing) return existing;
@@ -1982,6 +2000,23 @@ async function resolveGatewayInstitutionId(db: DatabaseSync, req: AuthenticatedR
     }
 
     return trimmedLocalId;
+}
+
+async function getGatewayCredentialById(req: AuthenticatedRequest, credentialId: string): Promise<Record<string, unknown> | null> {
+    const trimmedId = credentialId.trim();
+    if (!trimmedId || !req.gatewayToken) {
+        return null;
+    }
+
+    try {
+        const response = await gatewayJsonRequest(req, `/api/v1/credentials/${encodeURIComponent(trimmedId)}`);
+        if (!response.ok) {
+            return null;
+        }
+        return await response.json() as Record<string, unknown>;
+    } catch {
+        return null;
+    }
 }
 
 async function readRawRequestBody(req: Request): Promise<Buffer> {
@@ -2464,6 +2499,8 @@ function mapTeacherEnrollmentRow(row: Record<string, unknown>): TeacherEnrollmen
         status: String(row.status) as EnrollmentStatus,
         certificateIssued: asInteger(row.certificateIssued, 0) === 1,
         certificateId: asOptionalTrimmedString(row.certificateId),
+        reviewCredentialId: asOptionalTrimmedString(row.reviewCredentialId),
+        reviewSubmittedAt: asOptionalTrimmedString(row.reviewSubmittedAt),
         institutionId: asOptionalTrimmedString(row.institutionId),
         institutionName: asOptionalTrimmedString(row.institutionName),
         createdAt: String(row.createdAt),
@@ -2489,6 +2526,8 @@ function getEnrollmentById(db: DatabaseSync, id: string): TeacherEnrollment | nu
             e.status,
             e.certificateIssued,
             e.certificateId,
+            e.reviewCredentialId,
+            e.reviewSubmittedAt,
             c.institutionId,
             institution.name AS institutionName,
             e.createdAt,
@@ -2542,6 +2581,8 @@ function listTeacherEnrollments(db: DatabaseSync, options: {
             e.status,
             e.certificateIssued,
             e.certificateId,
+            e.reviewCredentialId,
+            e.reviewSubmittedAt,
             c.institutionId,
             institution.name AS institutionName,
             e.createdAt,
@@ -2625,7 +2666,7 @@ function listTeacherStudents(db: DatabaseSync, teacherUserId: string, search?: s
 
 function listEligibleTeacherCertificates(db: DatabaseSync, teacherUserId: string, search?: string): TeacherCertificateQueueItem[] {
     return listTeacherEnrollments(db, { teacherUserId, search })
-        .filter((enrollment) => enrollment.status === 'completed' && !!enrollment.finalGrade && !enrollment.certificateIssued)
+        .filter((enrollment) => enrollment.status === 'completed' && !!enrollment.finalGrade && !enrollment.certificateIssued && !enrollment.reviewCredentialId)
         .map((enrollment) => ({
             enrollmentId: enrollment.id,
             courseId: enrollment.courseId,
@@ -2640,6 +2681,8 @@ function listEligibleTeacherCertificates(db: DatabaseSync, teacherUserId: string
             finalGrade: enrollment.finalGrade,
             institutionName: enrollment.institutionName,
             updatedAt: enrollment.updatedAt,
+            reviewCredentialId: enrollment.reviewCredentialId,
+            reviewSubmittedAt: enrollment.reviewSubmittedAt,
         }));
 }
 
@@ -2713,11 +2756,15 @@ function buildTeacherDashboardSummary(db: DatabaseSync, teacher: AppUser): Teach
     };
 }
 
-async function listTeacherIssuedCertificates(db: DatabaseSync, contract: Contract, teacher: AppUser): Promise<TeacherIssuedCertificate[]> {
+async function listTeacherIssuedCertificates(db: DatabaseSync, contract: Contract, req: AuthenticatedRequest, teacher: AppUser): Promise<TeacherIssuedCertificate[]> {
     const issuanceEvents = listTeacherIssuanceEvents(db, teacher.id);
-    if (issuanceEvents.length === 0) return [];
+    const submittedEnrollments = listTeacherEnrollments(db, { teacherUserId: teacher.id }).filter((item) => !!item.reviewCredentialId);
 
-    const certificateIds = new Set(issuanceEvents.map((item) => item.certificateId));
+    const certificateIds = new Set<string>([
+        ...issuanceEvents.map((item) => item.certificateId),
+        ...submittedEnrollments.map((item) => item.reviewCredentialId!).filter(Boolean),
+    ]);
+
     const certificateMap = new Map(
         (await getAllCertificatesFromLedger(contract))
             .filter((certificate) => certificateIds.has(certificate.id))
@@ -2734,7 +2781,60 @@ async function listTeacherIssuedCertificates(db: DatabaseSync, contract: Contrac
         verificationMap.set(event.certificateId, current);
     }
 
-    return issuanceEvents.map((item) => {
+    const submittedItems: TeacherIssuedCertificate[] = [];
+    for (const enrollment of submittedEnrollments) {
+        const credentialId = enrollment.reviewCredentialId!;
+        const credential = await getGatewayCredentialById(req, credentialId);
+        if (!credential) {
+            submittedItems.push({
+                issuanceId: `review-${enrollment.id}`,
+                enrollmentId: enrollment.id,
+                courseId: enrollment.courseId,
+                courseTitle: enrollment.courseTitle,
+                certificateId: credentialId,
+                hash: '',
+                studentId: enrollment.studentId,
+                studentName: enrollment.studentName,
+                studentEmail: enrollment.studentEmail,
+                graduationDate: enrollment.reviewSubmittedAt?.slice(0, 10) || enrollment.updatedAt.slice(0, 10),
+                issuedAt: enrollment.reviewSubmittedAt || enrollment.updatedAt,
+                university: enrollment.institutionName || teacher.institutionName || 'Unknown institution',
+                status: 'pending_review',
+                verificationCount: 0,
+                latestVerificationAt: null,
+                verificationUrl: null,
+                proofReference: null,
+                versionNo: null,
+                qrToken: null,
+            });
+            continue;
+        }
+
+        const verification = verificationMap.get(credentialId);
+        submittedItems.push({
+            issuanceId: `review-${enrollment.id}`,
+            enrollmentId: enrollment.id,
+            courseId: enrollment.courseId,
+            courseTitle: asOptionalTrimmedString(credential.title) || asOptionalTrimmedString(credential.programName) || enrollment.courseTitle,
+            certificateId: asOptionalTrimmedString(credential.credentialId) || asOptionalTrimmedString(credential.id) || credentialId,
+            hash: asOptionalTrimmedString(credential.hash) || '',
+            studentId: asOptionalTrimmedString(credential.studentId) || enrollment.studentId,
+            studentName: asOptionalTrimmedString(credential.studentName) || enrollment.studentName,
+            studentEmail: enrollment.studentEmail,
+            graduationDate: asOptionalTrimmedString(credential.awardDate) || enrollment.reviewSubmittedAt?.slice(0, 10) || enrollment.updatedAt.slice(0, 10),
+            issuedAt: enrollment.reviewSubmittedAt || enrollment.updatedAt,
+            university: asOptionalTrimmedString(credential.institution) || enrollment.institutionName || teacher.institutionName || 'Unknown institution',
+            status: asOptionalTrimmedString(credential.status) || 'pending_review',
+            verificationCount: verification?.count ?? 0,
+            latestVerificationAt: verification?.latest ?? null,
+            verificationUrl: asOptionalTrimmedString(credential.verificationUrl),
+            proofReference: asOptionalTrimmedString(credential.proofReference),
+            versionNo: asNumber(credential.versionNo),
+            qrToken: asOptionalTrimmedString(credential.qrToken),
+        });
+    }
+
+    const issuedItems = issuanceEvents.map((item) => {
         const certificate = certificateMap.get(item.certificateId);
         const verification = verificationMap.get(item.certificateId);
         return {
@@ -2750,17 +2850,24 @@ async function listTeacherIssuedCertificates(db: DatabaseSync, contract: Contrac
             graduationDate: certificate?.graduationDate || item.issuedAt.slice(0, 10),
             issuedAt: item.issuedAt,
             university: certificate?.university || item.institutionName || teacher.institutionName || 'Unknown institution',
+            status: certificate?.isRevoked ? 'revoked' : 'anchored',
             verificationCount: verification?.count ?? 0,
             latestVerificationAt: verification?.latest ?? null,
+            verificationUrl: null,
+            proofReference: null,
+            versionNo: null,
+            qrToken: null,
         };
     });
+
+    return [...submittedItems, ...issuedItems].sort((left, right) => right.issuedAt.localeCompare(left.issuedAt));
 }
 
-async function buildTeacherAnalyticsSummary(db: DatabaseSync, contract: Contract, teacher: AppUser): Promise<TeacherAnalyticsSummary> {
+async function buildTeacherAnalyticsSummary(db: DatabaseSync, contract: Contract, req: AuthenticatedRequest, teacher: AppUser): Promise<TeacherAnalyticsSummary> {
     const courses = listCoursesByTeacher(db, teacher.id, { status: null });
     const enrollments = listTeacherEnrollments(db, { teacherUserId: teacher.id });
     const students = listTeacherStudents(db, teacher.id);
-    const issuedCertificates = await listTeacherIssuedCertificates(db, contract, teacher);
+    const issuedCertificates = await listTeacherIssuedCertificates(db, contract, req, teacher);
     const certificateIdSet = new Set(issuedCertificates.map((item) => item.certificateId));
     const verificationEvents = listVerificationEvents(db, { limit: 500 }).filter((event) => certificateIdSet.has(event.certificateId));
     const buckets = recentMonthBuckets(6);
@@ -4059,12 +4166,75 @@ async function main() {
             }
         });
 
+        app.post('/api/v1/credentials/:id/reissue', authMiddleware, async (req, res) => {
+            const authenticatedRequest = req as AuthenticatedRequest;
+            const credentialId = asTrimmedString(req.params.id);
+            if (!credentialId) {
+                res.status(400).json({ error: 'Credential id is required.' });
+                return;
+            }
+            if (!authenticatedRequest.gatewayToken) {
+                res.status(503).json({ error: 'Gateway token unavailable for credential reissue endpoint.' });
+                return;
+            }
+
+            try {
+                const response = await gatewayJsonRequest(authenticatedRequest, `/api/v1/credentials/${encodeURIComponent(credentialId)}/reissue`, {
+                    method: 'POST',
+                    body: JSON.stringify(req.body ?? {}),
+                });
+                const payload = await response.json();
+                res.status(response.status).json(payload);
+            } catch (error) {
+                res.status(502).json({ error: extractErrorMessage(error) || 'Failed to reach gateway.' });
+            }
+        });
+
+        app.get('/api/v1/tx/pending', authMiddleware, requireRoles('super_admin'), async (req, res) => {
+            const authenticatedRequest = req as AuthenticatedRequest;
+            if (!authenticatedRequest.gatewayToken) {
+                res.status(503).json({ error: 'Gateway token unavailable for transaction queue endpoint.' });
+                return;
+            }
+
+            try {
+                const response = await gatewayJsonRequest(authenticatedRequest, '/api/v1/tx/pending');
+                const payload = await response.json();
+                res.status(response.status).json(payload);
+            } catch (error) {
+                res.status(502).json({ error: extractErrorMessage(error) || 'Failed to reach gateway.' });
+            }
+        });
+
+        app.post('/api/v1/tx/:id/reconcile', authMiddleware, requireRoles('super_admin'), async (req, res) => {
+            const authenticatedRequest = req as AuthenticatedRequest;
+            const txId = asTrimmedString(req.params.id);
+            if (!txId) {
+                res.status(400).json({ error: 'Transaction id is required.' });
+                return;
+            }
+            if (!authenticatedRequest.gatewayToken) {
+                res.status(503).json({ error: 'Gateway token unavailable for transaction reconcile endpoint.' });
+                return;
+            }
+
+            try {
+                const response = await gatewayJsonRequest(authenticatedRequest, `/api/v1/tx/${encodeURIComponent(txId)}/reconcile`, {
+                    method: 'POST',
+                });
+                const payload = await response.json();
+                res.status(response.status).json(payload);
+            } catch (error) {
+                res.status(502).json({ error: extractErrorMessage(error) || 'Failed to reach gateway.' });
+            }
+        });
+
         app.get(['/api/dashboard/ministry/summary', '/api/v1/dashboard/ministry/summary'], authMiddleware, requireRoles('ministry_admin', 'super_admin'), async (_req, res) => {
             const summary = await buildMinistryDashboardSummary(db, contract);
             res.json(summary);
         });
 
-        app.get(['/api/dashboard/verifier/summary', '/api/v1/dashboard/verifier/summary'], authMiddleware, requireRoles('certificate_verifier', 'ministry_admin', 'super_admin'), async (_req, res) => {
+        app.get(['/api/dashboard/verifier/summary', '/api/v1/dashboard/verifier/summary'], authMiddleware, requireRoles('certificate_verifier', 'super_admin'), async (_req, res) => {
             const summary = await buildVerifierDashboardSummary(db, contract);
             res.json(summary);
         });
@@ -4081,7 +4251,7 @@ async function main() {
             res.json(institutions);
         });
 
-        app.post(['/api/institutions', '/api/v1/institutions'], authMiddleware, requireRoles('ministry_admin', 'super_admin'), async (req, res) => {
+        app.post(['/api/institutions', '/api/v1/institutions'], authMiddleware, requireRoles('super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const input = normalizeCreateInstitutionInput(req.body);
             if (!input.name) {
@@ -4104,7 +4274,7 @@ async function main() {
             res.status(201).json(institution);
         });
 
-        app.patch(['/api/institutions/:id', '/api/v1/institutions/:id'], authMiddleware, requireRoles('ministry_admin', 'super_admin'), async (req, res) => {
+        app.patch(['/api/institutions/:id', '/api/v1/institutions/:id'], authMiddleware, requireRoles('super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const institution = getInstitutionRecordById(db, asTrimmedString(req.params.id));
             if (!institution) {
@@ -4136,7 +4306,7 @@ async function main() {
             res.json(getInstitutionRecordById(db, institution.id));
         });
 
-        app.get('/api/v1/institutions/:id/settings', authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.get('/api/v1/institutions/:id/settings', authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const institutionId = asTrimmedString(req.params.id);
             if (!institutionId) {
@@ -4155,7 +4325,7 @@ async function main() {
             res.json(settings);
         });
 
-        app.patch('/api/v1/institutions/:id/settings', authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.patch('/api/v1/institutions/:id/settings', authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const institutionId = asTrimmedString(req.params.id);
             if (!institutionId) {
@@ -4253,7 +4423,7 @@ async function main() {
             res.json(users);
         });
 
-        app.post(['/api/users', '/api/v1/users'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.post(['/api/users', '/api/v1/users'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const input = normalizeCreateUserInput(req.body);
             if (!input.name || !input.email || !input.password || !input.role) {
@@ -4307,7 +4477,7 @@ async function main() {
             res.status(201).json(user);
         });
 
-        app.patch(['/api/users/:id', '/api/v1/users/:id'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.patch(['/api/users/:id', '/api/v1/users/:id'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const userRecord = getUserRecordById(db, asTrimmedString(req.params.id));
             if (!userRecord) {
@@ -4354,7 +4524,7 @@ async function main() {
             res.json(sanitizeUser(getUserRecordById(db, userRecord.id)!));
         });
 
-        app.post(['/api/users/:id/reset-password', '/api/v1/users/:id/reset-password'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.post(['/api/users/:id/reset-password', '/api/v1/users/:id/reset-password'], authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const userRecord = getUserRecordById(db, asTrimmedString(req.params.id));
             if (!userRecord) {
@@ -4401,7 +4571,7 @@ async function main() {
             res.json(listCoursesByInstitution(db, institutionId, { status, search }));
         });
 
-        app.post('/api/v1/institutions/:id/courses', authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.post('/api/v1/institutions/:id/courses', authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const institutionId = requester.role === 'school_admin'
                 ? requester.institutionId
@@ -4464,7 +4634,7 @@ async function main() {
             res.status(201).json(course);
         });
 
-        app.patch('/api/v1/courses/:id', authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
+        app.patch('/api/v1/courses/:id', authMiddleware, requireRoles('school_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const course = getCourseById(db, asTrimmedString(req.params.id));
             if (!course) {
@@ -4749,6 +4919,7 @@ async function main() {
 
         app.post('/api/teacher/enrollments/:id/issue-certificate', authMiddleware, requireRoles('teacher'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
+            const authenticatedRequest = req as AuthenticatedRequest;
             const enrollment = getEnrollmentById(db, asTrimmedString(req.params.id));
             if (!enrollment) {
                 res.status(404).json({ error: 'Enrollment not found.' });
@@ -4764,11 +4935,19 @@ async function main() {
                 return;
             }
             if (!enrollment.finalGrade) {
-                res.status(400).json({ error: 'A final grade is required before issuing a certificate.' });
+                res.status(400).json({ error: 'A final grade is required before submitting a credential for review.' });
                 return;
             }
             if (enrollment.certificateIssued || enrollment.certificateId) {
                 res.status(409).json({ error: 'A certificate has already been issued for this enrollment.' });
+                return;
+            }
+            if (enrollment.reviewCredentialId) {
+                res.status(409).json({ error: 'This enrollment has already been submitted to the institute review queue.' });
+                return;
+            }
+            if (!authenticatedRequest.gatewayToken) {
+                res.status(503).json({ error: 'Gateway token unavailable for credential review submission.' });
                 return;
             }
             const institutionName = course.institutionName || requester.institutionName;
@@ -4777,44 +4956,57 @@ async function main() {
                 return;
             }
 
-            const issueDate = asTrimmedString(req.body?.graduationDate) || new Date().toISOString().slice(0, 10);
-            const issueInput: IssueCertificateInput = {
-                id: generatedCertificateId(),
-                studentId: enrollment.studentId,
-                studentName: enrollment.studentName,
-                degree: course.title,
-                university: institutionName,
-                graduationDate: issueDate,
-            };
+            const awardDate = asTrimmedString(req.body?.graduationDate) || new Date().toISOString().slice(0, 10);
+            const credentialId = generatedCertificateId();
 
             try {
-                const result = await issueCertificateRecord(db, contract, requester, issueInput, {
-                    institutionId: course.institutionId,
-                    courseId: course.id,
-                    enrollmentId: enrollment.id,
+                const response = await gatewayJsonRequest(authenticatedRequest, '/api/v1/credentials', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        id: credentialId,
+                        institutionId: course.institutionId,
+                        studentNumber: enrollment.studentId,
+                        studentName: enrollment.studentName,
+                        certificateNumber: credentialId,
+                        title: course.title,
+                        programName: course.title,
+                        degree: course.title,
+                        awardDate,
+                        status: 'pending_review',
+                    }),
                 });
+                const payload = await response.json().catch(() => ({ error: 'Failed to create credential review record.' }));
+                if (!response.ok) {
+                    res.status(response.status).json(payload);
+                    return;
+                }
 
                 db.prepare(`
                     UPDATE course_enrollments
-                    SET certificateIssued = 1, certificateId = ?, updatedAt = ?
+                    SET reviewCredentialId = ?, reviewSubmittedAt = ?, updatedAt = ?
                     WHERE id = ?
-                `).run(result.certificate.id, nowIso(), enrollment.id);
+                `).run(
+                    asOptionalTrimmedString((payload as Record<string, unknown>).credentialId) || asOptionalTrimmedString((payload as Record<string, unknown>).id) || credentialId,
+                    nowIso(),
+                    nowIso(),
+                    enrollment.id,
+                );
 
                 insertAuditLog(db, {
                     actorUserId: requester.id,
-                    action: 'teacher.enrollment.issue-certificate',
+                    action: 'teacher.enrollment.submit-review',
                     entityType: 'course_enrollment',
                     entityId: enrollment.id,
-                    details: { courseId: course.id, certificateId: result.certificate.id },
+                    details: { courseId: course.id, credentialId, reviewStatus: 'pending_review' },
                 });
 
                 res.status(201).json({
                     enrollment: getEnrollmentById(db, enrollment.id),
-                    certificate: result.certificate,
+                    certificate: payload,
                 });
             } catch (error) {
                 const message = extractErrorMessage(error);
-                const status = message.includes('suspended institution') ? 403 : mapFabricErrorStatus(message);
+                const status = message.includes('suspended institution') ? 403 : 502;
                 res.status(status).json({ error: message });
             }
         });
@@ -4844,7 +5036,7 @@ async function main() {
             const requester = (req as AuthenticatedRequest).user!;
             const search = asTrimmedString(req.query.search);
             const readyToIssue = listEligibleTeacherCertificates(db, requester.id, search);
-            const issued = await listTeacherIssuedCertificates(db, contract, requester);
+            const issued = await listTeacherIssuedCertificates(db, contract, req as AuthenticatedRequest, requester);
             const filteredIssued = !search
                 ? issued
                 : issued.filter((item) => {
@@ -4862,13 +5054,13 @@ async function main() {
 
         app.get('/api/teacher/analytics', authMiddleware, requireRoles('teacher'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
-            res.json(await buildTeacherAnalyticsSummary(db, contract, requester));
+            res.json(await buildTeacherAnalyticsSummary(db, contract, req as AuthenticatedRequest, requester));
         });
 
         app.post('/api/certificates', authMiddleware, requireRoles(...ISSUER_ROLES), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             if (requester.role === 'teacher') {
-                res.status(403).json({ error: 'Teachers must issue certificates from /api/teacher/enrollments/:id/issue-certificate.' });
+                res.status(403).json({ error: 'Teachers must submit credential-ready enrollments for institute review.' });
                 return;
             }
             const input = normalizeIssueInput(req.body);
@@ -5339,7 +5531,7 @@ async function main() {
             res.json(getFraudCaseById(db, fraudCase.id));
         });
 
-        app.get(['/api/audits', '/api/v1/audit'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin', 'certificate_verifier'), async (req, res) => {
+        app.get(['/api/audits', '/api/v1/audit'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const action = asTrimmedString(req.query.action);
             const entityType = asTrimmedString(req.query.entityType);
@@ -5362,7 +5554,7 @@ async function main() {
             res.json(await collectNetworkStatus(contract));
         });
 
-        app.get(['/api/reports/summary', '/api/v1/reports/summary'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin', 'certificate_verifier'), async (req, res) => {
+        app.get(['/api/reports/summary', '/api/v1/reports/summary'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const { from, to } = normalizeDateRange(req.query);
             const institutionId = requester.role === 'school_admin'
@@ -5371,7 +5563,7 @@ async function main() {
             res.json(buildReportSummary(db, from, to, institutionId));
         });
 
-        app.get(['/api/reports/export', '/api/v1/reports/export'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin', 'certificate_verifier'), async (req, res) => {
+        app.get(['/api/reports/export', '/api/v1/reports/export'], authMiddleware, requireRoles('school_admin', 'ministry_admin', 'super_admin'), async (req, res) => {
             const requester = (req as AuthenticatedRequest).user!;
             const type = normalizeReportType(req.query.type);
             const format = normalizeReportFormat(req.query.format);
